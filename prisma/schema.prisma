@@ -1,0 +1,578 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+    provider = "prisma-client-js"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+model User {
+    id        String   @id @default(cuid())
+    email     String   @unique
+    name      String?
+    password  String?
+    role      UserRole @default(FARMER)
+    phone     String?
+    avatar    String?
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    // Relations
+    panchayat_id String?
+    panchayat    Panchayat? @relation(fields: [panchayat_id], references: [id])
+
+    notifications NotificationPreference?
+    activityLogs  ActivityLog[]
+}
+
+enum UserRole {
+    ADMIN              // State/Central government admin
+    STATE_NODAL        // State-level oversight officer
+    PANCHAYAT          // Village/Block panchayat officer
+    CHC_OWNER          // Custom Hiring Centre owner
+    FARMER             // End farmer (for complaints/bookings)
+}
+
+model Machine {
+    id                  String        @id @default(cuid())
+    registration_number String        @unique
+    machine_type        MachineType
+    chc_id              String
+    status              MachineStatus @default(idle)
+
+    // Location
+    latitude  Float
+    longitude Float
+    district  String
+    state     String
+
+    // Performance
+    total_hours      Int    @default(0)
+    fuel_efficiency  Float  @default(0)
+    utilization_rate Float  @default(0)
+    fuel_level       Float?
+
+    // Details
+    make            String?
+    model           String?
+    year            Int?
+    purchase_date   DateTime?
+    warranty_expiry DateTime?
+    gps_device_id   String?
+    sim_card_number String?
+
+    // Relations
+    operator_id String?
+    chc         CustomHiringCentre @relation(fields: [chc_id], references: [id], onDelete: Cascade)
+    operator    Operator?          @relation(fields: [operator_id], references: [id])
+
+    last_active DateTime @default(now())
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @updatedAt
+
+    usageLogs   UsageLog[]
+    alerts      Alert[]
+    positions   MachinePosition[]
+    maintenance MaintenanceRecord[]
+    bookings    Booking[]
+    
+    // New relations for accountability
+    telemetryLogs       TelemetryLog[]
+    sessions            UtilizationSession[]
+
+    @@index([chc_id])
+    @@index([status])
+    @@index([gps_device_id])
+}
+
+enum MachineStatus {
+    active
+    idle
+    maintenance
+    offline
+}
+
+enum MachineType {
+    baler
+    mulcher
+    seeder
+    harvester
+    tiller
+    happy_seeder
+    zero_till_drill
+}
+
+model MachinePosition {
+    id         String   @id @default(cuid())
+    machine_id String
+    latitude   Float
+    longitude  Float
+    speed      Float?
+    heading    Float?
+    timestamp  DateTime @default(now())
+
+    machine Machine @relation(fields: [machine_id], references: [id], onDelete: Cascade)
+
+    @@index([machine_id])
+    @@index([timestamp])
+}
+
+model CustomHiringCentre {
+    id             String  @id @default(cuid())
+    name           String
+    latitude       Float
+    longitude      Float
+    district       String
+    state          String
+    contact_number String
+    email          String?
+
+    owner_name         String?
+    total_machines     Int     @default(0)
+    performance_rating Float   @default(0)
+    revenue_this_month Float   @default(0)
+
+    // Panchayat linkage for accountability
+    panchayat_id       String?
+    panchayat          Panchayat? @relation(fields: [panchayat_id], references: [id])
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    machines  Machine[]
+    operators Operator[]
+    bookings  Booking[]
+    alerts    Alert[]
+
+    @@index([state])
+    @@index([district])
+    @@index([panchayat_id])
+}
+
+model Operator {
+    id                 String @id @default(cuid())
+    name               String
+    phone              String
+    chc_id             String
+    rating             Float  @default(5.0)
+    total_hours_worked Int    @default(0)
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    chc       CustomHiringCentre @relation(fields: [chc_id], references: [id], onDelete: Cascade)
+    machines  Machine[]
+    usageLogs UsageLog[]
+
+    @@index([chc_id])
+}
+
+model UsageLog {
+    id          String   @id @default(cuid())
+    machine_id  String
+    operator_id String
+    start_time  DateTime
+    end_time    DateTime
+
+    latitude  Float
+    longitude Float
+    district  String
+    state     String
+
+    area_covered  Float
+    fuel_consumed Float
+
+    farmer_name    String?
+    farmer_contact String?
+    village        String?
+    notes          String?
+    photo_urls     String[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    machine  Machine  @relation(fields: [machine_id], references: [id], onDelete: Cascade)
+    operator Operator @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+
+    @@index([machine_id])
+    @@index([operator_id])
+    @@index([start_time])
+}
+
+model Alert {
+    id         String        @id @default(cuid())
+    machine_id String?
+    chc_id     String?
+    panchayat_id String?      // NEW: Link to panchayat for governance alerts
+    alert_type AlertType
+    severity   AlertSeverity
+    status     AlertStatus   @default(open)
+
+    message           String
+    description       String?
+    affected_resource String?
+
+    created_at      DateTime  @default(now())
+    updated_at      DateTime  @updatedAt
+    acknowledged_at DateTime?
+    resolved_at     DateTime?
+
+    machine Machine?            @relation(fields: [machine_id], references: [id], onDelete: SetNull)
+    chc     CustomHiringCentre? @relation(fields: [chc_id], references: [id], onDelete: SetNull)
+    panchayat Panchayat?        @relation(fields: [panchayat_id], references: [id], onDelete: SetNull)
+
+    comments AlertComment[]
+
+    @@index([machine_id])
+    @@index([chc_id])
+    @@index([panchayat_id])
+    @@index([severity])
+    @@index([status])
+}
+
+enum AlertType {
+    underutilization
+    maintenance
+    geofence
+    offline
+    fuel_low
+    anomaly
+    booking_request
+    system_update
+    
+    // NEW: Governance & Accountability Alerts
+    GEOFENCE_BREACH      // Machine moved outside panchayat boundary
+    LOW_UTILIZATION      // CHC underperforming
+    SOS_BURNING          // Complaint about stubble burning
+    SESSION_ANOMALY      // Suspicious usage pattern
+}
+
+enum AlertSeverity {
+    low
+    medium
+    high
+    critical
+}
+
+enum AlertStatus {
+    open
+    acknowledged
+    resolved
+    dismissed
+}
+
+model AlertComment {
+    id        String   @id @default(cuid())
+    alert_id  String
+    user_id   String?
+    comment   String
+    createdAt DateTime @default(now())
+
+    alert Alert @relation(fields: [alert_id], references: [id], onDelete: Cascade)
+}
+
+model AlertRule {
+    id                    String        @id @default(cuid())
+    rule_name             String
+    trigger_condition     String
+    threshold_value       Float?
+    alert_type            AlertType
+    severity              AlertSeverity
+    enabled               Boolean       @default(true)
+    notification_channels String[]      @default(["in_app"])
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}
+
+model NotificationPreference {
+    id                String      @id @default(cuid())
+    user_id           String      @unique
+    alert_types       AlertType[] @default([])
+    channels          String[]    @default(["in_app"])
+    quiet_hours_start String?
+    quiet_hours_end   String?
+    daily_digest      Boolean     @default(false)
+    sound_enabled     Boolean     @default(true)
+
+    updatedAt DateTime @updatedAt
+
+    user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model Booking {
+    id             String @id @default(cuid())
+    machine_id     String
+    farmer_name    String
+    farmer_contact String
+    chc_id         String
+
+    machine_type   MachineType
+    start_date     DateTime
+    end_date       DateTime
+    land_area      Float
+    estimated_cost Float
+    status         BookingStatus @default(pending)
+
+    latitude  Float
+    longitude Float
+    district  String
+    state     String
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    machine Machine              @relation(fields: [machine_id], references: [id], onDelete: Cascade)
+    chc     CustomHiringCentre  @relation(fields: [chc_id], references: [id], onDelete: Cascade)
+
+    @@index([machine_id])
+    @@index([chc_id])
+}
+
+enum BookingStatus {
+    pending
+    confirmed
+    completed
+    cancelled
+}
+
+model MaintenanceRecord {
+    id             String    @id @default(cuid())
+    machine_id     String
+    service_type   String
+    service_date   DateTime
+    next_due_date  DateTime?
+    cost           Float
+    description    String
+    technician     String?
+    parts_replaced String[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    machine Machine @relation(fields: [machine_id], references: [id], onDelete: Cascade)
+
+    @@index([machine_id])
+}
+
+model SuccessStory {
+    id            String  @id @default(cuid())
+    title         String
+    description   String
+    farmer_name   String
+    latitude      Float
+    longitude     Float
+    district      String
+    state         String
+    image_url     String?
+    impact_metric String?
+
+    published_date DateTime @default(now())
+    createdAt      DateTime @default(now())
+}
+
+model News {
+    id             String       @id @default(cuid())
+    title          String
+    description    String
+    category       NewsCategory @default(announcement)
+    published_date DateTime
+    image_url      String?
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}
+
+enum NewsCategory {
+    milestone
+    announcement
+    achievement
+    event
+}
+
+model ActivityLog {
+    id            String  @id @default(cuid())
+    user_id       String?
+    action        String
+    resource_type String
+    resource_id   String?
+    details       String?
+
+    createdAt DateTime @default(now())
+
+    user User? @relation(fields: [user_id], references: [id], onDelete: SetNull)
+
+    @@index([user_id])
+    @@index([resource_type])
+}
+
+// ============ NEW MODELS FOR KRISHI DRISHTI ACCOUNTABILITY ============
+
+model Panchayat {
+    id              String   @id @default(cuid())
+    name            String
+    block           String
+    district        String
+    state           String
+    
+    // Geographic Boundary (for geofence detection)
+    boundary_polygon Json?    // GeoJSON polygon
+    
+    // Performance Metrics (for leaderboard)
+    total_machines           Int     @default(0)
+    active_machine_hours     Float   @default(0)
+    utilization_score        Float   @default(0)
+    rank                     Int?
+    
+    // Contact
+    officer_name             String?
+    officer_phone            String?
+    officer_email            String?
+    
+    createdAt       DateTime @default(now())
+    updatedAt       DateTime @updatedAt
+    
+    // Relations
+    users           User[]
+    chcs            CustomHiringCentre[]
+    sessions        UtilizationSession[]
+    alerts          Alert[]
+    complaints      Complaint[]
+
+    @@index([district])
+    @@index([state])
+    @@index([rank])
+}
+
+model TelemetryLog {
+    id              String   @id @default(cuid())
+    device_id       String   // IoT device/SIM identifier
+    machine_id      String?  // Linked after device registration
+    
+    // GPS Data
+    latitude        Float
+    longitude       Float
+    altitude        Float?
+    gps_accuracy    Float?
+    
+    // Sensor Data
+    ignition        Boolean  @default(false)
+    vibration       Float?   // Accelerometer reading (m/s²)
+    engine_rpm      Float?
+    fuel_level      Float?
+    temperature     Float?
+    
+    // Computed Status
+    status          TelemetryStatus @default(IDLE)
+    
+    // Timestamp
+    recorded_at     DateTime
+    received_at     DateTime @default(now())
+    
+    machine         Machine? @relation(fields: [machine_id], references: [id])
+    
+    @@index([device_id])
+    @@index([machine_id])
+    @@index([recorded_at])
+    @@index([status])
+}
+
+enum TelemetryStatus {
+    IDLE
+    ACTIVE
+    MOVING
+    OFFLINE
+}
+
+model UtilizationSession {
+    id                  String   @id @default(cuid())
+    machine_id          String
+    panchayat_id        String
+    
+    // Session Timing
+    start_time          DateTime
+    end_time            DateTime?
+    total_minutes       Int?     // Auto-calculated on end
+    
+    // Work Metrics
+    start_lat           Float
+    start_lng           Float
+    end_lat             Float?
+    end_lng             Float?
+    
+    acres_covered       Float?   // Can be estimated from GPS track
+    distance_traveled   Float?   // km
+    
+    // Validation
+    verified_by_panchayat Boolean @default(false)
+    farmer_name         String?
+    farmer_phone        String?
+    
+    // Subsidy Calculation
+    subsidy_eligible    Boolean @default(true)
+    subsidy_amount      Float?
+    
+    createdAt           DateTime @default(now())
+    updatedAt           DateTime @updatedAt
+    
+    machine             Machine     @relation(fields: [machine_id], references: [id], onDelete: Cascade)
+    panchayat           Panchayat   @relation(fields: [panchayat_id], references: [id], onDelete: Cascade)
+    
+    @@index([machine_id])
+    @@index([panchayat_id])
+    @@index([start_time])
+    @@index([verified_by_panchayat])
+}
+
+model Complaint {
+    id                  String      @id @default(cuid())
+    type                ComplaintType
+    
+    // Location
+    latitude            Float
+    longitude           Float
+    district            String
+    state               String
+    panchayat_id        String?
+    
+    // Details
+    description         String
+    photo_urls          String[]    @default([])
+    reporter_name       String?
+    reporter_phone      String?
+    
+    // Status
+    status              ComplaintStatus @default(OPEN)
+    assigned_to         String?     // Panchayat officer ID
+    resolution_notes    String?
+    resolved_at         DateTime?
+    
+    createdAt           DateTime    @default(now())
+    updatedAt           DateTime    @updatedAt
+    
+    panchayat           Panchayat?  @relation(fields: [panchayat_id], references: [id])
+    
+    @@index([panchayat_id])
+    @@index([status])
+    @@index([type])
+}
+
+enum ComplaintType {
+    STUBBLE_BURNING
+    MACHINE_NOT_WORKING
+    OPERATOR_ABSENT
+    BOOKING_NOT_HONORED
+    OTHER
+}
+
+enum ComplaintStatus {
+    OPEN
+    ASSIGNED
+    IN_PROGRESS
+    RESOLVED
+    DISMISSED
+}
